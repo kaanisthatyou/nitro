@@ -1,8 +1,12 @@
 import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { request } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { execa } from "execa";
 import { getRandomPort, waitForPort } from "get-port-please";
 import { resolve } from "pathe";
-// import { isWindows } from "std-env";
+import { isWindows } from "std-env";
 import { describe, expect, it } from "vitest";
 import { setupTest, startServer, testNitro } from "../tests.ts";
 import { testCloseHook } from "./_close-hook.ts";
@@ -68,6 +72,43 @@ describe("nitro:preset:node-server", async () => {
       expect(large.status).toBe(413);
     } finally {
       child.kill("SIGKILL");
+    }
+  }, 40_000);
+
+  // https://github.com/nitrojs/nitro/issues/4662 (the `iis-node` shim moves iisnode's pipe to `NITRO_UNIX_SOCKET`)
+  it("listens on NITRO_UNIX_SOCKET", async () => {
+    const name = `nitro-test-${process.pid}-${Date.now()}`;
+    const socketPath = isWindows ? `\\\\.\\pipe\\${name}` : join(tmpdir(), `${name}.sock`);
+    const child = execa(process.execPath, [resolve(ctx.outDir, "server/index.mjs")], {
+      env: { NITRO_UNIX_SOCKET: socketPath },
+      stdio: process.env.TEST_DEBUG ? "inherit" : "ignore",
+      reject: false,
+    });
+    const get = (path: string) =>
+      new Promise<{ status?: number; body: string }>((resolve, reject) => {
+        request({ socketPath, path }, (res) => {
+          let body = "";
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => (body += chunk));
+          res.on("end", () => resolve({ status: res.statusCode, body }));
+        })
+          .on("error", reject)
+          .end();
+      });
+    try {
+      let res: Awaited<ReturnType<typeof get>> | undefined;
+      for (let i = 0; i < 40 && !res; i++) {
+        res = await get("/api/hello").catch(
+          () => new Promise<undefined>((r) => setTimeout(r, 250))
+        );
+      }
+      expect(res?.status).toBe(200);
+      expect(JSON.parse(res!.body)).toEqual({ message: "Hello API" });
+    } finally {
+      child.kill("SIGKILL");
+      if (!isWindows) {
+        await rm(socketPath, { force: true });
+      }
     }
   }, 40_000);
 

@@ -16,7 +16,7 @@ export function resolveServeOptions(opts: ServerOptions): ServerOptions {
   const _parsedPort = Number.parseInt(env.NITRO_PORT ?? env.PORT ?? "");
   const cert = env.NITRO_SSL_CERT;
   const key = env.NITRO_SSL_KEY;
-  // const socketPath = env.NITRO_UNIX_SOCKET; // TODO
+  const socketPath = env.NITRO_UNIX_SOCKET;
 
   const resolved: ServerOptions = {
     ...entryOptions,
@@ -31,6 +31,10 @@ export function resolveServeOptions(opts: ServerOptions): ServerOptions {
     if (entryOptions[runtime] && opts[runtime]) {
       resolved[runtime] = { ...entryOptions[runtime], ...opts[runtime] } as any;
     }
+  }
+
+  if (socketPath) {
+    resolved.node = { ...resolved.node, path: socketPath };
   }
 
   return resolved;
